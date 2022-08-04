@@ -2,8 +2,15 @@
 
 #include <ESPDateTime.h>
 #include <WiFiManager.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 
 WiFiManager wifiManager;
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const char *mqtt_server = "mqtt2.mianos.com";
+const char* ntpServer = "ntp.mianos.com";
 
 static volatile int loops;
 uint8_t GPIO_Pin = D1;
@@ -34,15 +41,69 @@ void IRAM_ATTR onTimerISR() {
   loops++;
 }
 
+void callback(char *topic_str, byte *payload, unsigned int length) {
+  auto topic = String(topic_str);
+  Serial.printf("Message arrived, topic '%s'\n", topic_str);
+}
+
+const char *dname = "pwr";
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = dname;
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+
+      String cmnd_topic = String("cmnd/") + dname + "/#";
+      client.subscribe(cmnd_topic.c_str());
+
+      DateTime.begin(/* timeout param */);
+      if (!DateTime.isTimeValid()) {
+        Serial.println("Failed to get time from server.");
+      } 
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      StaticJsonDocument<200> doc;
+      doc["version"] = 1;
+      doc["time"] = DateTime.toISOString();
+
+      String status_topic = "tele/" + String(dname) + "/init";
+      String output;
+      serializeJson(doc, output);
+      client.publish(status_topic.c_str(), output.c_str());
+      Serial.printf("/init %s\n", output.c_str());
+ 
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+
 void setup() {
   Serial.begin(115200);
-  DateTime.setTimeZone("AEST-10AEDT,M10.1.0,M4.1.0/3");
-  tzset();
 
   auto res = wifiManager.autoConnect("portal");
   if (!res) {
     Serial.printf("Failed to connect");
   }
+
+  DateTime.setTimeZone("AEST-10AEDT,M10.1.0,M4.1.0/3");
+  DateTime.setServer(ntpServer);
+  DateTime.begin(15 * 1000);
+  tzset();
+
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+
   pinMode(GPIO_Pin, INPUT_PULLUP);
   for (auto ii = 0; ii < ipins_size; ii++) {
     pinMode(ipins[ii], OUTPUT);
@@ -64,6 +125,9 @@ void setup() {
 
 void loop() {
   Serial.printf("counts %d\n", loops);
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
   delay(1000);
-  // put your main code here, to run repeatedly:
 }
