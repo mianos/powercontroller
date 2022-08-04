@@ -91,14 +91,13 @@ void reconnect() {
 void setup() {
   Serial.begin(115200);
 
-  auto res = wifiManager.autoConnect("portal");
+  auto res = wifiManager.autoConnect("wifiPortal");
   if (!res) {
     Serial.printf("Failed to connect");
   }
 
   DateTime.setTimeZone("AEST-10AEDT,M10.1.0,M4.1.0/3");
   DateTime.setServer(ntpServer);
-  DateTime.begin(15 * 1000);
   tzset();
 
   client.setServer(mqtt_server, 1883);
