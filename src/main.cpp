@@ -4,6 +4,7 @@
 #include <WiFiManager.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <StringSplitter.h>
 
 WiFiManager wifiManager;
 WiFiClient espClient;
@@ -11,6 +12,8 @@ PubSubClient client(espClient);
 
 const char *mqtt_server = "mqtt2.mianos.com";
 const char* ntpServer = "ntp.mianos.com";
+
+const char *dname = "pwr";
 
 static volatile int loops;
 uint8_t GPIO_Pin = D1;
@@ -44,32 +47,58 @@ void IRAM_ATTR onTimerISR() {
 void callback(char *topic_str, byte *payload, unsigned int length) {
   auto topic = String(topic_str);
   Serial.printf("Message arrived, topic '%s'\n", topic_str);
+  auto splitter = StringSplitter(topic, '/', 4); // new StringSplitter(string_to_split, delimiter, limit)
+  int itemCount = splitter.getItemCount();
+  if (itemCount < 3) {
+    Serial.printf("Item count less than 3 %d '%s'", itemCount, topic_str);
+    return;
+  }
+  // cmnd/pwr/  {"power": 0-1000}
+  if (splitter.getItemAtIndex(0) == "cmnd") {
+    DynamicJsonDocument jpl(1024);
+    auto err = deserializeJson(jpl, payload, length);
+    if (err) {
+      Serial.printf("deserializeJson() failed: '%s'\n", err.c_str());
+    } else {
+      String output;
+      serializeJson(jpl, output);
+      Serial.printf("payload '%s'\n", output.c_str());
+    }
+    auto dest = splitter.getItemAtIndex(2);
+    Serial.printf("dest '%s'\n", dest.c_str());
+    if (dest == "power") {
+      if (jpl.containsKey("duty")) {
+        auto duty = jpl["duty"].as<unsigned int>();
+        Serial.printf("Duty cycle set to %d\n", duty);
+      }
+    }
+  }
 }
 
-const char *dname = "pwr";
 
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
     // Create a random client ID
     String clientId = dname;
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
     if (client.connect(clientId.c_str())) {
-
-      String cmnd_topic = String("cmnd/") + dname + "/#";
-      client.subscribe(cmnd_topic.c_str());
-
+      // set date
       DateTime.begin(/* timeout param */);
       if (!DateTime.isTimeValid()) {
         Serial.println("Failed to get time from server.");
       } 
-      Serial.println("connected");
-      // Once connected, publish an announcement...
+
+      // subscribe to commands for this device
+      String cmnd_topic = String("cmnd/") + dname + "/#";
+      client.subscribe(cmnd_topic.c_str());
+
+      // publish an init with the existing state, if any
       StaticJsonDocument<200> doc;
       doc["version"] = 1;
       doc["time"] = DateTime.toISOString();
+      doc["duty"] = 0;
 
       String status_topic = "tele/" + String(dname) + "/init";
       String output;
