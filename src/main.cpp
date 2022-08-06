@@ -21,6 +21,8 @@ uint8_t GPIO_Pin = D1;
 static const int ipins[] = {D2, D7, D5, D6};
 const int ipins_size = (sizeof (ipins) / sizeof (int));
 
+static volatile int cycle_time = 0;
+
 IRAM_ATTR void zcisr() {
   // 5 per uSec so 200 per mS
   // so 100ms is 100 * 200
@@ -31,10 +33,13 @@ IRAM_ATTR void zcisr() {
   // 100 divisions?
   // 500 divisions? then simple 0-500 for the timer
   // 
+  if (!cycle_time) {
+    return;
+  }
   for (auto ii = 0; ii < ipins_size; ii++) {
     digitalWrite(ipins[ii], HIGH);
   }
-  timer1_write(100 * 200); // (2500000 / 5) ticks per us from TIM_DIV16 == 500,000 us interval  
+  timer1_write(cycle_time * 50); // (2500000 / 5) ticks per us from TIM_DIV16 == 500,000 us interval  
 }
 
 void IRAM_ATTR onTimerISR() {
@@ -70,6 +75,11 @@ void callback(char *topic_str, byte *payload, unsigned int length) {
       if (jpl.containsKey("duty")) {
         auto duty = jpl["duty"].as<unsigned int>();
         Serial.printf("Duty cycle set to %d\n", duty);
+        if (duty < 0 || duty > 1000) {
+          Serial.printf("Invalid duty time %d\n", duty);  // TODO: maybe publish?
+          return;
+        }
+        cycle_time = duty;
       }
     }
   }
@@ -98,7 +108,7 @@ void reconnect() {
       StaticJsonDocument<200> doc;
       doc["version"] = 1;
       doc["time"] = DateTime.toISOString();
-      doc["duty"] = 0;
+      doc["duty"] = cycle_time;
 
       String status_topic = "tele/" + String(dname) + "/init";
       String output;
