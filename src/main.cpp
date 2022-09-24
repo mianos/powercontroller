@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include <ArduinoOTA.h>
 #include <ESPDateTime.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
@@ -139,6 +140,39 @@ void setup() {
   DateTime.setServer(ntpServer);
   tzset();
 
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_FS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
+
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
 
@@ -161,8 +195,25 @@ void setup() {
 
 }
 
+void publish_count() {
+    if (client.connected()) {
+      StaticJsonDocument<200> doc;
+      doc["version"] = 1;
+      doc["time"] = DateTime.toISOString();
+      doc["loops"] = loops;
+      doc["duty"] = cycle_time;
+
+      String status_topic = "tele/" + String(dname) + "/power";
+      String output;
+      serializeJson(doc, output);
+      client.publish(status_topic.c_str(), output.c_str());
+    }
+}
+
 void loop() {
+  ArduinoOTA.handle();
   Serial.printf("counts %d\n", loops);
+  publish_count();
   if (!client.connected()) {
     reconnect();
   }
